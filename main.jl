@@ -75,7 +75,9 @@ function calc_kin_e(v)
 end
 
 function do_md(io::IO, n_steps, Δt, egf!, r, v=zeros(size(r));
-    add_first=true, t0=0.0, printerval=1)
+    add_first=true, t0=0.0, printerval=1, v_scale=1.0, v_int=0)
+
+    BLAS.scal!(v_scale, v)
 
     g = similar(r)
 
@@ -102,6 +104,10 @@ function do_md(io::IO, n_steps, Δt, egf!, r, v=zeros(size(r));
         V = egf!(g, r)
         axpy!(-0.5 * Δt, g, v)
 
+        if v_int != 0 && i % v_int == 0
+            BLAS.scal!(v_scale, v)
+        end
+
         t += Δt
 
         if i % printerval == 0
@@ -113,6 +119,8 @@ function do_md(io::IO, n_steps, Δt, egf!, r, v=zeros(size(r));
         #     break
         # end
     end
+
+    r, v, t, Δt, printerval
 end
 
 function get_last_conf(filename)
@@ -188,7 +196,7 @@ function get_nth_conf(filename, n)
             if i == n
                 break
             end
-    
+
             i += 1
         end
     end
@@ -200,11 +208,20 @@ function get_nth_conf(filename, n)
     printerval
 end
 
-function resume_md(filename, pot, n_steps;
-    Δt=nothing, v_scale=1.0, printerval=nothing)
-    r, v, t, Δt_l, printerval_l = get_last_conf(filename)
+function resume_md(filename, (r, v, t, Δt, printerval), n_steps;
+    v_scale=1.0, v_int=0)
+    egf! = @time make_egf(1.0, 1.0, r)
 
-    v *= v_scale
+    open(filename, "a") do io
+        do_md(io, n_steps, Δt, egf!, r, v;
+            add_first=false, t0=t, printerval=printerval,
+            v_scale=v_scale, v_int=v_int)
+    end
+end
+
+function resume_md_file(filename, n_steps;
+    Δt=nothing, v_scale=1.0, v_int=0, printerval=nothing)
+    r, v, t, Δt_l, printerval_l = get_last_conf(filename)
 
     if isnothing(Δt)
         Δt = Δt_l
@@ -214,10 +231,12 @@ function resume_md(filename, pot, n_steps;
         printerval = printerval_l
     end
 
-    egf! = @time make_egf(1.0, 1.0, r)
+    egf! = make_egf(1.0, 1.0, r)
 
     open(filename, "a") do io
-        do_md(io, n_steps, Δt, egf!, r, v; add_first=false, t0=t)
+        do_md(io, n_steps, Δt, egf!, r, v;
+            add_first=false, t0=t, printerval=printerval,
+            v_scale=v_scale, v_int=v_int)
     end
 end
 
@@ -298,7 +317,7 @@ function init_cold()
 
     egf! = make_egf(1.0, 1.0, r)
 
-    open("xyz/20.xyz", "w") do io
-        do_md(io, 1000, 0.01, egf!, r; printerval=10)
+    open("xyz/10.xyz", "w") do io
+        do_md(io, 10000, 0.01, egf!, r; printerval=50)
     end
 end
