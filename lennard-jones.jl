@@ -5,7 +5,7 @@ function lennard_jones(r_eq, E_b)
     function potential(r)
         n_p = size(r, 2)
         E = 0.0
-        for i in 1:n_p, j in (i+1):n_p
+        @inbounds for i in 1:n_p, j in (i+1):n_p
             ri = @view r[:, i]
             rj = @view r[:, j]
             r2 = sum((a - b)^2 for (a, b) in zip(ri, rj))
@@ -26,7 +26,7 @@ function lennard_jones_par(r_eq, E_b)
     function potential(r)
         n_p = size(r, 2)
         fill!(buffers, 0.0)
-        Threads.@threads for id in 1:nth
+        @inbounds Threads.@threads for id in 1:nth
             E_loc = 0.0
             for i in id:nth:n_p, j in (i+1):n_p
                 ri = @view r[:, i]
@@ -49,7 +49,7 @@ function lennard_jones_grad(r_eq, E_b)
     function g!(g, r)
         n_p = size(r, 2)
         fill!(g, 0)
-        for i in 1:n_p, j in (i+1):n_p
+        @inbounds for i in 1:n_p, j in (i+1):n_p
             ri = @view r[:, i]
             rj = @view r[:, j]
             r2 = sum((a - b)^2 for (a, b) in zip(ri, rj))
@@ -72,7 +72,7 @@ function lennard_jones_grad_par(r_eq, E_b, r)
     buffers = [similar(r) for _ in 1:nth]
     function g!(g, r)
         n_p = size(r, 2)
-        Threads.@threads for id in 1:nth
+        @inbounds Threads.@threads for id in 1:nth
             buf = buffers[id]
             fill!(buf, 0.0)
             for i in id:nth:n_p, j in (i+1):n_p
