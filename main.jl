@@ -61,12 +61,49 @@ function make_rd_grad(pot, r)
     end
 end
 
-function make_egf(r_eq, E_b, r)
+function make_lennard_jones_egf(r_eq, E_b, r)
     pot = lennard_jones_par(r_eq, E_b)
     g! = lennard_jones_grad_par(r_eq, E_b, r)
     function egf!(g, r)
         g!(g, r)
         pot(r)
+    end
+end
+
+# E = (r - rw + 1)^12
+# E' = 12 (r - rw + 1)^11 * r / |r|
+function make_spherical_wall_egf(rw, c)
+    function egf!(g, r)
+        n_p = size(r, 2)
+        E = 0.0
+        fill!(g, 0.0)
+        for i in 1:n_p
+            ri = @view r[:, i]
+            rn = norm(ri)
+            if rn > rw - 1
+                rnw = rn - (rw - 1)
+
+                E += c * rnw^12
+
+                g[:, i] = ri
+                g[:, i] *= c * 12 * rnw^11 / rn
+            end
+        end
+        E
+    end
+end
+
+function combine_egfs(r, egfs...)
+    buf = similar(r)
+    function egf!(g, r)
+        fill!(buf, 0.0)
+        fill!(g, 0.0)
+        E = 0.0
+        for cur_egf! in egfs
+            E += cur_egf!(buf, r)
+            axpy!(1.0, buf, g)
+        end
+        E
     end
 end
 
@@ -208,9 +245,8 @@ function get_nth_conf(filename, n)
     printerval
 end
 
-function resume_md(filename, (r, v, t, Δt, printerval), n_steps;
+function resume_md(filename, egf!, (r, v, t, Δt, printerval), n_steps;
     v_scale=1.0, v_int=0)
-    egf! = @time make_egf(1.0, 1.0, r)
 
     open(filename, "a") do io
         do_md(io, n_steps, Δt, egf!, r, v;
@@ -219,7 +255,7 @@ function resume_md(filename, (r, v, t, Δt, printerval), n_steps;
     end
 end
 
-function resume_md_file(filename, n_steps;
+function resume_md_file(filename, egf!, n_steps;
     Δt=nothing, v_scale=1.0, v_int=0, printerval=nothing)
     r, v, t, Δt_l, printerval_l = get_last_conf(filename)
 
@@ -230,8 +266,6 @@ function resume_md_file(filename, n_steps;
     if isnothing(printerval)
         printerval = printerval_l
     end
-
-    egf! = make_egf(1.0, 1.0, r)
 
     open(filename, "a") do io
         do_md(io, n_steps, Δt, egf!, r, v;
@@ -319,5 +353,18 @@ function init_cold()
 
     open("xyz/10.xyz", "w") do io
         do_md(io, 10000, 0.01, egf!, r; printerval=50)
+    end
+end
+
+function test_md_sphere()
+    r = setup_cubic_lattice(20, 1.0)
+
+    len_pot = make_lennard_jones_egf(1.0, 1.0, r)
+    box_pot = make_spherical_wall_egf(35, 1)
+
+    egf! = combine_egfs(r, len_pot, box_pot)
+
+    open("xyz/cube.xyz", "w") do io
+        do_md(io, 1000, 0.01, egf!, r; printerval=10)
     end
 end
