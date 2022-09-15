@@ -46,7 +46,7 @@ function setup_cubic_lattice(n, r)
 
     is = 0:(n-1)
     for i in is, j in is, k in is
-        append!(coords, (i, j, k) .* r)
+        append!(coords, ((i, j, k) .- (n - 1) / 2) .* r)
     end
 
     reshape(coords, 3, n^3)
@@ -112,9 +112,16 @@ function calc_kin_e(v)
 end
 
 function do_md(io::IO, n_steps, Δt, egf!, r, v=zeros(size(r));
-    add_first=true, t0=0.0, printerval=1, v_scale=1.0, v_int=0)
+    add_first=true, t0=0.0, printerval=1, e_add=0.0, e_int=0)
 
-    BLAS.scal!(v_scale, v)
+    n_atm = size(r, 2)
+
+    T = calc_kin_e(v) / n_atm
+    if !iszero(e_add) && !iszero(T)
+        T_target = T + e_add
+        scl = √(T_target / T)
+        BLAS.scal!(scl, v)
+    end
 
     g = similar(r)
 
@@ -141,8 +148,11 @@ function do_md(io::IO, n_steps, Δt, egf!, r, v=zeros(size(r));
         V = egf!(g, r)
         axpy!(-0.5 * Δt, g, v)
 
-        if v_int != 0 && i % v_int == 0
-            BLAS.scal!(v_scale, v)
+        if e_int != 0 && i % e_int == 0
+            T = calc_kin_e(v) / n_atm
+            T_target = T + e_add
+            scl = √(T_target / T)
+            BLAS.scal!(scl, v)
         end
 
         t += Δt
@@ -246,17 +256,17 @@ function get_nth_conf(filename, n)
 end
 
 function resume_md(filename, egf!, (r, v, t, Δt, printerval), n_steps;
-    v_scale=1.0, v_int=0)
+    e_add=0.0, e_int=0)
 
     open(filename, "a") do io
         do_md(io, n_steps, Δt, egf!, r, v;
             add_first=false, t0=t, printerval=printerval,
-            v_scale=v_scale, v_int=v_int)
+            e_add=e_add, e_int=e_int)
     end
 end
 
 function resume_md_file(filename, egf!, n_steps;
-    Δt=nothing, v_scale=1.0, v_int=0, printerval=nothing)
+    Δt=nothing, e_add=0.0, e_int=0, printerval=nothing)
     r, v, t, Δt_l, printerval_l = get_last_conf(filename)
 
     if isnothing(Δt)
@@ -270,7 +280,7 @@ function resume_md_file(filename, egf!, n_steps;
     open(filename, "a") do io
         do_md(io, n_steps, Δt, egf!, r, v;
             add_first=false, t0=t, printerval=printerval,
-            v_scale=v_scale, v_int=v_int)
+            e_add=e_add, e_int=e_int)
     end
 end
 
@@ -334,6 +344,28 @@ function plot_tVK(filename; is=:, time=false, E0_i=0)
     end
 end
 
+function plot_tVK_scaled(filename; is=:, time=false, E0_i=0)
+    ts, Vs, Ks, n_atm = get_tVK(filename)
+
+    if E0_i == 0
+        E0_i = length(ts)
+    end
+
+    E0 = Vs[E0_i] + Ks[E0_i]
+    @show E0
+    Vs .-= E0
+
+    if time
+        plot(ts[is], Vs[is] ./ n_atm; label="Potential", leg=:topleft)
+        plot!(ts[is], Ks[is] ./ n_atm; label="Kinetic")
+        plot!(ts[is], (Vs+Ks)[is] ./ n_atm; label="Total")
+    else
+        plot(Vs[is] ./ n_atm; label="Potential", leg=:topleft)
+        plot!(Ks[is] ./ n_atm; label="Kinetic")
+        plot!((Vs+Ks)[is] ./ n_atm; label="Total")
+    end
+end
+
 ############ TESTS ################
 
 function test_md()
@@ -357,14 +389,14 @@ function init_cold()
 end
 
 function test_md_sphere()
-    r = setup_cubic_lattice(20, 1.0)
+    r = setup_cubic_lattice(10, 1.0)
 
     len_pot = make_lennard_jones_egf(1.0, 1.0, r)
-    box_pot = make_spherical_wall_egf(35, 1)
+    box_pot = make_spherical_wall_egf(20, 1)
 
     egf! = combine_egfs(r, len_pot, box_pot)
 
-    open("xyz/cube.xyz", "w") do io
-        do_md(io, 1000, 0.01, egf!, r; printerval=10)
+    open("xyz/10.xyz", "w") do io
+        do_md(io, 1000, 0.01, egf!, r; printerval=100)
     end
 end
